@@ -1,0 +1,254 @@
+---
+title: "Reliability Intraoral Scanner"
+output: html_notebook
+---
+# Packages
+
+```{r packages}
+library(tidyverse)
+library(janitor)
+library(irr)
+```
+
+```{r create df}
+df <- readxl::read_xlsx("reliability_data.xlsx", sheet = "Sheet2" )
+
+```
+
+Clean names and empty cols
+```{r clean names}
+df <- df  %>% 
+        janitor::clean_names() %>% 
+        janitor::remove_empty_cols()
+
+
+
+```
+
+Create two datasets, for min and max
+
+```{r two datasets}
+
+min <- df %>% 
+        select(min:d_21_l) %>% 
+        mutate(type = "comparison") %>% 
+        gather(d_13_d:d_21_l, key = "tooth", value = "difference")
+colnames(min)[colnames(min) == "min"] <- "comparison"
+
+
+max <- df %>% 
+        select(max:d_21_l_1) %>% 
+        mutate(type = "comparison") %>% 
+        gather(d_13_d_1:d_21_l_1, key = "tooth", value = "difference")
+colnames(max)[colnames(max) == "max"] <- "comparison"
+
+max$tooth = substr(max$tooth,1,nchar(max$tooth) -2)
+
+```
+
+Join datasets
+
+```{r bind}
+df2 <- bind_rows(min, max) #create a semi tidy dataset
+df2 <- df2 %>% 
+        select(-type)
+```
+
+```{r delete old datasets}
+# rm(df, min, max) #delete unused datasets
+```
+#Descriptive stats
+
+```{r}
+df2 %>% 
+        select(comparison:difference) %>% 
+        group_by(comparison) %>% 
+        summarise_each (funs(min, 
+                      q25 = quantile(., 0.25), 
+                      median = median, 
+                      q75 = quantile(., 0.75), 
+                      max = max,
+                      mean = mean, 
+                      sd = sd), 
+                      difference)
+
+```
+
+
+
+abs difference
+```{r mutate abs diff y expect diff}
+df2 <- df2 %>% 
+        mutate("abs_diff" = abs(difference)) #absolute difference
+
+df2 <- df2 %>% 
+        mutate("expect_diff" = 0) #expected difference = 0
+
+```
+
+# Distribution
+```{r histogram}
+df2 %>% 
+        ggplot(aes(x = abs_diff)) +
+        geom_histogram(bins = 5) + 
+        scale_x_log10()
+```
+There is an outlier
+
+```{r locate outliers}
+which.max(df2$abs_diff)
+```
+Delete the outlier
+
+```{r delete outlier}
+df2 <- df2[-830, ]
+```
+
+```{r}
+df2 %>% ggplot(aes(difference)) + 
+        geom_histogram(bins = 10) + 
+        labs(title = "Distribution of the differences between measurements", 
+             x = "Difference", 
+             y = "Counts") + 
+        theme_minimal()
+```
+
+
+```{r df3 matrix}
+df3 <- df2 %>% 
+        group_by(tooth, comparison) %>% 
+        summarise("Average" = mean(difference)) %>% 
+        spread(comparison, value = Average)
+
+
+
+```
+
+
+
+
+
+# Agreement
+```{r icc}
+df3 %>% 
+        ungroup() %>% 
+        select(1--10:9--10) %>% 
+        icc(., model = "twoway", type = "agreement")
+
+```
+
+There are significant differences between the measurements across raters
+
+Absolute values matrix
+```{r}
+df3_abs <- df3 %>% 
+        ungroup() %>% 
+        select(1--10:9--10) %>% 
+        abs(.) 
+
+```
+
+```{r}
+df2 %>% 
+        ggplot(aes(x = tooth, y = abs_diff)) +
+        
+        geom_boxplot() + 
+        geom_jitter(alpha = 0.1) + 
+        coord_flip() +
+        labs( title = "Measurements per sample", 
+              y = "Absolute difference", 
+              x = "Sample and surface") + 
+        theme_minimal()
+```
+
+Seems that the machine has some thresholds for detection, since there are no 0.01
+
+
+```{r}
+set.seed(3000)
+df2 <- df2 %>% 
+        mutate(expected_values = rnorm(1079, mean = 0, sd = 0.01))
+```
+
+```{r}
+df2 %>% 
+        select(difference, expected_values) %>% 
+        gather("type", "value", 1:2) %>% 
+        ggplot(aes(value, fill = type)) +
+        geom_density(alpha = 0.4) + 
+        labs(title = "Expected random variance vs real differences", 
+             subtitle = "3 samples, 4 measurements each.", 
+             x = "Difference", 
+             y = "Count", 
+             fill = "Key") + 
+        theme_minimal()
+```
+
+
+```{r}
+df2 %>% 
+        ggplot(aes(x = difference, y = expected_values)) +
+        geom_point() +
+        stat_smooth() + 
+        labs(title = "Scatterplot expected vs real differences", 
+             y = "Expected by random", 
+             x = "Real differences") +
+        theme_minimal()
+```
+
+
+```{r}
+library(BlandAltmanLeh)
+
+ba_plot <- bland.altman.plot(df2$difference, df2$expected_values, graph.sys="ggplot2", conf.int=.95)
+ba_plot + theme_minimal() + 
+        labs(title = "Altman-Bland plot", 
+             subtitle = "Expected vs real differences", 
+             y = "Difference expected - real", 
+             x = "Mean of measurements")
+```
+
+# Is any statistical difference between expected and real differences?
+## Against expected distribution
+```{r}
+t.test(df2$difference, df2$expected_values)
+```
+
+```{r}
+df2 %>% 
+        select(difference, expected_values) %>% 
+        gather() %>% 
+        ggplot(aes(x = key, y = value)) + 
+        geom_boxplot() + 
+        theme_minimal()
+```
+
+
+## As one sample
+```{r}
+t.test(df2$difference, mu = 0)
+```
+
+Are normally distributed the differences?
+
+```{r}
+shapiro.test(df2$difference)
+```
+
+```{r}
+install.packages("ggpubr")
+library("ggpubr")
+ggqqplot(df2$difference, 
+         ylab = "Measured differences",
+         ggtheme = theme_minimal())
+```
+Compare with expected values
+```{r}
+ggqqplot(df2$expected_values, 
+         ylab = "Expected values",
+         ggtheme = theme_minimal())
+```
+
+```{r}
+shapiro.test(df2$expected_values)
+```

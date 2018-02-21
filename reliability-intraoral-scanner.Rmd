@@ -1,6 +1,9 @@
 ---
 title: "Reliability Intraoral Scanner"
-output: html_notebook
+output: 
+  html_notebook: 
+    toc: yes
+    toc_float: true
 ---
 # Packages
 
@@ -207,6 +210,7 @@ ba_plot + theme_minimal() +
              y = "Difference expected - real", 
              x = "Mean of measurements")
 ```
+Read [Understanding Bland Altman analysis](http://www.biochemia-medica.com/2015/25/141)
 
 # Is any statistical difference between expected and real differences?
 ## Against expected distribution
